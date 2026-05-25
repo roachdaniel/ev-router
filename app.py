@@ -217,11 +217,12 @@ def security_headers(resp):
     resp.headers['X-Content-Type-Options'] = 'nosniff'
     resp.headers['Content-Security-Policy'] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com https://cdn.tailwindcss.com; "
+        "script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com https://cdn.tailwindcss.com https://static.cloudflareinsights.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; "
         "font-src https://fonts.gstatic.com; "
         "img-src 'self' data: blob: https://*.googleapis.com https://*.gstatic.com; "
-        "connect-src 'self' https://maps.googleapis.com https://places.googleapis.com; "
+        "connect-src 'self' https://maps.googleapis.com https://places.googleapis.com https://*.cloudflareaccess.com https://static.cloudflareinsights.com; "
+        "frame-src https://*.cloudflareaccess.com; "
         "worker-src 'self' blob:;"
     )
     return resp
