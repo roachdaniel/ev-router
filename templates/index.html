@@ -218,8 +218,8 @@
 
     // ── Profile ───────────────────────────────────────────────────────────────
     function loadProfile() {
-      try { return JSON.parse(localStorage.getItem('ev_profile')) || { connector: 'All' }; }
-      catch { return { connector: 'All' }; }
+      try { return JSON.parse(localStorage.getItem('ev_profile')) || { connector: 'CCS' }; }
+      catch { return { connector: 'CCS' }; }
     }
     function saveProfile(p) {
       profile = p;
