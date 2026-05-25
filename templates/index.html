@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0d">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EV Router">
+  <title>EV Router</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="icon" href="/static/icons/icon.svg" type="image/svg+xml">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: '#161616',
+            card: '#1c1c1e',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body { overscroll-behavior: none; }
+    #map { position: fixed; inset: 0; top: var(--header-h, 120px); }
+    #drawer {
+      transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+      max-height: 70vh;
+    }
+    #detail-sheet {
+      transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+    }
+    .chip {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: #2a2a2e;
+      color: #e5e5e5;
+    }
+    .status-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .dot-green  { background:#22c55e; }
+    .dot-yellow { background:#eab308; }
+    .dot-red    { background:#ef4444; }
+    .dot-gray   { background:#6b7280; }
+    .station-card { border-bottom: 1px solid #2a2a2e; }
+    .station-card:last-child { border-bottom: none; }
+    input::placeholder { color: #6b7280; }
+    input:focus { outline: none; }
+    #station-list { overflow-y: auto; max-height: calc(70vh - 56px); }
+    .badge-app { background: #7f1d1d; color: #fca5a5; }
+    .badge-free { background: #14532d; color: #86efac; }
+    .loader { border:3px solid #2a2a2e; border-top-color:#22c55e; border-radius:50%; width:20px; height:20px; animation:spin .8s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+  </style>
+</head>
+<body class="bg-[#0d0d0d] text-white select-none">
+
+  <!-- ── HEADER ── -->
+  <div id="header" class="fixed top-0 left-0 right-0 z-50 bg-[#0d0d0d]/95 backdrop-blur-sm px-4 pt-3 pb-2 space-y-2">
+    <!-- Title row -->
+    <div class="flex items-center justify-between">
+      <span class="text-base font-bold tracking-tight">⚡ EV Router</span>
+      <button id="btn-profile" onclick="openProfileModal()"
+        class="text-xs font-semibold px-3 py-1 rounded-full bg-surface border border-white/10 text-green-400">
+        All Connectors
+      </button>
+    </div>
+    <!-- Origin input -->
+    <div class="flex items-center gap-2 bg-surface rounded-xl px-3 py-2">
+      <span class="text-green-500 text-xs font-bold w-4">A</span>
+      <input id="origin-input" type="text" placeholder="From…"
+        class="flex-1 bg-transparent text-sm text-white min-w-0">
+    </div>
+    <!-- Destination input -->
+    <div class="flex items-center gap-2 bg-surface rounded-xl px-3 py-2">
+      <span class="text-red-400 text-xs font-bold w-4">B</span>
+      <input id="dest-input" type="text" placeholder="To…"
+        class="flex-1 bg-transparent text-sm text-white min-w-0">
+    </div>
+    <!-- Search button -->
+    <button id="btn-search" onclick="searchRoute()"
+      class="w-full py-2.5 rounded-xl bg-green-600 active:bg-green-700 text-sm font-semibold flex items-center justify-center gap-2">
+      <span id="btn-search-text">Find Charging Route</span>
+      <div id="btn-spinner" class="loader hidden"></div>
+    </button>
+  </div>
+
+  <!-- ── MAP ── -->
+  <div id="map"></div>
+
+  <!-- ── STATION DRAWER ── -->
+  <div id="drawer"
+    class="fixed bottom-0 left-0 right-0 z-40 bg-surface rounded-t-2xl transform translate-y-full"
+    style="padding-bottom: env(safe-area-inset-bottom);">
+    <!-- Handle -->
+    <div id="drawer-handle"
+      class="flex flex-col items-center pt-2 pb-1 cursor-pointer"
+      onclick="toggleDrawer()">
+      <div class="w-10 h-1 rounded-full bg-white/20 mb-2"></div>
+      <div class="flex items-center justify-between w-full px-4 pb-1">
+        <span id="drawer-title" class="text-sm font-semibold text-white/80">Charging Stations</span>
+        <span id="drawer-count" class="text-xs text-white/40"></span>
+      </div>
+    </div>
+    <!-- Station list -->
+    <div id="station-list" class="overflow-y-auto"></div>
+  </div>
+
+  <!-- ── STATION DETAIL SHEET ── -->
+  <div id="detail-sheet"
+    class="fixed inset-0 z-50 bg-surface transform translate-y-full overflow-y-auto"
+    style="padding-bottom: env(safe-area-inset-bottom);">
+    <div class="sticky top-0 bg-surface/95 backdrop-blur-sm flex items-center gap-3 px-4 py-3 border-b border-white/10">
+      <button onclick="closeDetail()" class="p-1 -ml-1 text-green-400 font-semibold text-sm">← Back</button>
+      <span id="detail-network" class="text-sm font-semibold text-white/60 truncate"></span>
+    </div>
+    <div id="detail-body" class="px-4 py-4 space-y-4"></div>
+  </div>
+
+  <!-- ── VEHICLE PROFILE MODAL ── -->
+  <div id="profile-modal" class="fixed inset-0 z-50 bg-black/70 hidden items-center justify-center px-6">
+    <div class="bg-card rounded-2xl p-6 w-full max-w-xs space-y-4">
+      <h2 class="font-bold text-base">Connector Type</h2>
+      <p class="text-xs text-white/50">Filter stations to your vehicle's connector</p>
+      <div class="space-y-2" id="connector-options">
+        <!-- rendered by JS -->
+      </div>
+      <button onclick="closeProfileModal()"
+        class="w-full py-2.5 rounded-xl bg-green-600 text-sm font-semibold mt-2">
+        Done
+      </button>
+    </div>
+  </div>
+
+  <!-- ── TOAST ── -->
+  <div id="toast" class="fixed top-4 left-4 right-4 z-[100] hidden">
+    <div id="toast-inner" class="rounded-xl px-4 py-3 text-sm font-medium text-center shadow-lg"></div>
+  </div>
+
+  <!-- Google Maps JS — key injected server-side, libraries loaded at runtime -->
+  <script>
+    window.initMap = function() {};
+  </script>
+  <script src="https://maps.googleapis.com/maps/api/js?key={{ maps_key }}&libraries=places,geometry&loading=async&callback=onMapsLoaded" async defer></script>
+
+  <script>
+    // ── State ────────────────────────────────────────────────────────────────
+    let map, originAC, destAC;
+    let routePolyline = null;
+    let stationMarkers = [];
+    let allStations = [];
+    let originLL = null, destLL = null;
+    let drawerOpen = false;
+    let profile = loadProfile();
+
+    const CONNECTOR_OPTIONS = ['All', 'CCS', 'NACS', 'CHAdeMO', 'J1772'];
+    const STATUS_COLORS = { green: '#22c55e', yellow: '#eab308', red: '#ef4444', gray: '#6b7280' };
+
+    // ── Init ─────────────────────────────────────────────────────────────────
+    window.onMapsLoaded = function() {
+      const headerH = document.getElementById('header').offsetHeight + 8;
+      document.documentElement.style.setProperty('--header-h', headerH + 'px');
+
+      map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: 39.5, lng: -98.35 },
+        zoom: 4,
+        mapTypeId: 'roadmap',
+        disableDefaultUI: true,
+        gestureHandling: 'greedy',
+        clickableIcons: false,
+        styles: DARK_STYLES,
+      });
+
+      map.addListener('click', () => {
+        if (drawerOpen) setDrawer(false);
+      });
+
+      originAC = new google.maps.places.Autocomplete(
+        document.getElementById('origin-input'),
+        { types: ['geocode'], componentRestrictions: { country: 'us' } }
+      );
+      destAC = new google.maps.places.Autocomplete(
+        document.getElementById('dest-input'),
+        { types: ['geocode'], componentRestrictions: { country: 'us' } }
+      );
+
+      originAC.addListener('place_changed', () => {
+        const p = originAC.getPlace();
+        if (p?.geometry) originLL = { lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
+      });
+      destAC.addListener('place_changed', () => {
+        const p = destAC.getPlace();
+        if (p?.geometry) destLL = { lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
+      });
+
+      // Prevent map pan while autocomplete dropdown is open
+      ['origin-input', 'dest-input'].forEach(id => {
+        const el = document.getElementById(id);
+        el.addEventListener('focus', () => map.setOptions({ gestureHandling: 'none' }));
+        el.addEventListener('blur', () => setTimeout(() => map.setOptions({ gestureHandling: 'greedy' }), 300));
+      });
+
+      renderProfileButton();
+      tryRestoreCachedRoute();
+
+      // Register service worker
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      }
+    };
+
+    // ── Profile ───────────────────────────────────────────────────────────────
+    function loadProfile() {
+      try { return JSON.parse(localStorage.getItem('ev_profile')) || { connector: 'All' }; }
+      catch { return { connector: 'All' }; }
+    }
+    function saveProfile(p) {
+      profile = p;
+      localStorage.setItem('ev_profile', JSON.stringify(p));
+      renderProfileButton();
+    }
+    function renderProfileButton() {
+      document.getElementById('btn-profile').textContent =
+        profile.connector === 'All' ? 'All Connectors' : profile.connector;
+    }
+    function openProfileModal() {
+      const el = document.getElementById('connector-options');
+      el.innerHTML = CONNECTOR_OPTIONS.map(c => `
+        <label class="flex items-center gap-3 py-2 cursor-pointer">
+          <input type="radio" name="connector" value="${c}" ${profile.connector === c ? 'checked' : ''}
+            onchange="saveProfile({connector:'${c}'})" class="accent-green-500 w-4 h-4">
+          <span class="text-sm">${c === 'All' ? 'All connectors' : c}</span>
+        </label>`).join('');
+      document.getElementById('profile-modal').classList.replace('hidden', 'flex');
+    }
+    function closeProfileModal() {
+      document.getElementById('profile-modal').classList.replace('flex', 'hidden');
+    }
+
+    // ── Route Search ──────────────────────────────────────────────────────────
+    async function searchRoute() {
+      const originText = document.getElementById('origin-input').value.trim();
+      const destText   = document.getElementById('dest-input').value.trim();
+      if (!originText || !destText) { showToast('Enter both origin and destination'); return; }
+
+      setLoading(true);
+
+      // Geocode if Autocomplete didn't fire (user typed without selecting)
+      if (!originLL) originLL = await geocode(originText);
+      if (!destLL)   destLL   = await geocode(destText);
+      if (!originLL || !destLL) { setLoading(false); return; }
+
+      try {
+        const res = await fetch('/api/route', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ origin: originLL, destination: destLL }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Route error'); return; }
+
+        renderRoute(data);
+        localStorage.setItem('ev_last_route', JSON.stringify(data));
+      } catch {
+        showToast('Network error — check connection');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function geocode(address) {
+      try {
+        const r = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`);
+        const d = await r.json();
+        if (!r.ok) { showToast(d.error || 'Could not find address'); return null; }
+        return { lat: d.lat, lng: d.lng };
+      } catch { showToast('Geocoding failed'); return null; }
+    }
+
+    // ── Render Route ──────────────────────────────────────────────────────────
+    function renderRoute(data) {
+      allStations = data.stations || [];
+
+      // Filter by connector profile
+      const filtered = profile.connector === 'All'
+        ? allStations
+        : allStations.filter(s =>
+            s.connectors.some(c => c.label === profile.connector));
+
+      // Clear old markers + polyline
+      stationMarkers.forEach(m => m.setMap(null));
+      stationMarkers = [];
+      if (routePolyline) routePolyline.setMap(null);
+
+      // Draw route
+      const path = google.maps.geometry.encoding.decodePath(data.polyline);
+      routePolyline = new google.maps.Polyline({
+        path, map,
+        strokeColor: '#22c55e',
+        strokeOpacity: 0.85,
+        strokeWeight: 4,
+      });
+
+      // Fit bounds
+      const bounds = new google.maps.LatLngBounds();
+      path.forEach(p => bounds.extend(p));
+      map.fitBounds(bounds, { top: 16, bottom: 180, left: 16, right: 16 });
+
+      // Place markers
+      filtered.forEach(station => {
+        const marker = new google.maps.Marker({
+          position: { lat: station.lat, lng: station.lng },
+          map,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 9,
+            fillColor: STATUS_COLORS[station.status_color] || '#6b7280',
+            fillOpacity: 1,
+            strokeColor: '#ffffff',
+            strokeWeight: 2,
+          },
+          title: station.name,
+        });
+        marker.addListener('click', () => openDetail(station));
+        stationMarkers.push(marker);
+      });
+
+      // Station list
+      renderStationList(filtered, data.distance_text, data.duration_text);
+      setDrawer(true);
+    }
+
+    function renderStationList(stations, distText, durText) {
+      const list = document.getElementById('station-list');
+      const count = document.getElementById('drawer-count');
+      const title = document.getElementById('drawer-title');
+      title.textContent = `${distText} · ${durText}`;
+      count.textContent = `${stations.length} station${stations.length !== 1 ? 's' : ''}`;
+
+      if (!stations.length) {
+        list.innerHTML = '<p class="text-white/40 text-sm text-center py-8">No charging stations found along this route</p>';
+        return;
+      }
+
+      list.innerHTML = stations.map((s, i) => `
+        <div class="station-card px-4 py-3 active:bg-white/5 cursor-pointer"
+             onclick="openDetail(allStations[${allStations.indexOf(s)}])">
+          <div class="flex items-start gap-3">
+            <div class="status-dot dot-${s.status_color} mt-1.5"></div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-sm font-semibold truncate">${escHtml(s.name)}</span>
+                ${s.max_kw ? `<span class="text-xs font-bold text-green-400 shrink-0">${s.max_kw} kW</span>` : ''}
+              </div>
+              <div class="text-xs text-white/40 truncate mt-0.5">${escHtml(s.address)}</div>
+              <div class="flex flex-wrap gap-1 mt-1.5">
+                ${s.connectors.map(c => `<span class="chip">${c.label}</span>`).join('')}
+                ${s.app_required ? '<span class="chip badge-app">App req\'d</span>' : ''}
+                ${s.live_data && s.available !== null
+                  ? `<span class="chip badge-free">${s.available} avail</span>`
+                  : ''}
+              </div>
+            </div>
+          </div>
+        </div>`).join('');
+    }
+
+    // ── Station Detail ────────────────────────────────────────────────────────
+    function openDetail(station) {
+      document.getElementById('detail-network').textContent = station.name;
+      const body = document.getElementById('detail-body');
+
+      const statusText = { green: 'Available', yellow: 'Likely busy', red: 'Offline', gray: 'Status unknown' };
+      const statusTextColor = { green: 'text-green-400', yellow: 'text-yellow-400', red: 'text-red-400', gray: 'text-white/40' };
+
+      const nearbyStations = allStations
+        .filter(s => s.place_id !== station.place_id)
+        .map(s => {
+          const d = google.maps.geometry.spherical.computeDistanceBetween(
+            new google.maps.LatLng(station.lat, station.lng),
+            new google.maps.LatLng(s.lat, s.lng)
+          ) / 1609.34;
+          return { ...s, dist: d };
+        })
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, 3);
+
+      const mapsLink = `https://www.google.com/maps/search/?api=1&query=${station.lat},${station.lng}`;
+
+      body.innerHTML = `
+        <!-- Status banner -->
+        <div class="rounded-xl bg-card p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <div class="status-dot dot-${station.status_color}"></div>
+              <span class="text-sm font-semibold ${statusTextColor[station.status_color]}">${statusText[station.status_color]}</span>
+            </div>
+            ${station.live_data
+              ? `<span class="text-xs text-white/40">${station.available !== null ? station.available + ' of ' + station.total_ports + ' available' : 'Live data'}</span>`
+              : '<span class="text-xs text-white/40">No live data</span>'}
+          </div>
+          ${station.max_kw ? `<div class="text-2xl font-bold text-green-400">${station.max_kw} <span class="text-sm font-normal text-white/60">kW max</span></div>` : ''}
+          <a href="${mapsLink}" target="_blank" rel="noopener"
+            class="block text-sm text-white/60 hover:text-white active:text-white">${escHtml(station.address)} ↗</a>
+        </div>
+
+        <!-- Connectors -->
+        <div class="rounded-xl bg-card p-4">
+          <div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">Connectors</div>
+          ${station.connectors.length
+            ? station.connectors.map(c => `
+              <div class="flex items-center justify-between py-1.5">
+                <div class="flex items-center gap-2">
+                  <span class="chip">${c.label}</span>
+                </div>
+                <div class="text-right">
+                  <span class="text-sm font-semibold">${c.kw ? c.kw + ' kW' : '—'}</span>
+                  <span class="text-xs text-white/40 ml-2">${c.count} port${c.count !== 1 ? 's' : ''}</span>
+                </div>
+              </div>`).join('')
+            : '<p class="text-sm text-white/40">Connector info unavailable</p>'}
+        </div>
+
+        <!-- Access -->
+        <div class="rounded-xl bg-card p-4 space-y-2">
+          <div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-1">Access</div>
+          ${station.app_required
+            ? `<div class="flex items-center gap-2 text-sm">
+                <span class="chip badge-app">App Required</span>
+                <span class="text-white/60">${station.app_name || ''}</span>
+              </div>`
+            : '<div class="text-sm text-white/60">Credit card or app accepted</div>'}
+          ${station.note ? `<p class="text-xs text-white/40">${escHtml(station.note)}</p>` : ''}
+          ${station.app_android
+            ? `<a href="${station.app_android}" target="_blank" rel="noopener"
+                class="block mt-2 text-center py-2 rounded-lg bg-green-600/20 text-green-400 text-sm font-semibold">
+                Open ${escHtml(station.app_name || 'App')} →
+              </a>`
+            : ''}
+        </div>
+
+        <!-- Nearby food (lazy loaded) -->
+        <div id="nearby-poi" class="rounded-xl bg-card p-4">
+          <div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">Nearby Food &amp; Coffee</div>
+          <div class="flex justify-center py-2"><div class="loader"></div></div>
+        </div>
+
+        <!-- Nearby stations -->
+        ${nearbyStations.length ? `
+        <div class="rounded-xl bg-card p-4">
+          <div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">Nearby Alternatives</div>
+          ${nearbyStations.map(s => `
+            <div class="flex items-center gap-3 py-2 cursor-pointer active:opacity-70"
+                 onclick="closeDetail(); setTimeout(() => openDetail(allStations.find(x => x.place_id === '${s.place_id}')), 310)">
+              <div class="status-dot dot-${s.status_color}"></div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm truncate">${escHtml(s.name)}</div>
+                <div class="text-xs text-white/40">${s.dist.toFixed(1)} mi away${s.max_kw ? ' · ' + s.max_kw + ' kW' : ''}</div>
+              </div>
+            </div>`).join('')}
+        </div>` : ''}
+      `;
+
+      // Show sheet
+      document.getElementById('detail-sheet').style.transform = 'translateY(0)';
+      document.getElementById('detail-sheet').scrollTop = 0;
+
+      // Lazy load POI
+      fetchPOI(station.lat, station.lng);
+
+      // Pan map to station
+      if (map) map.panTo({ lat: station.lat, lng: station.lng });
+    }
+
+    function closeDetail() {
+      document.getElementById('detail-sheet').style.transform = 'translateY(100%)';
+    }
+
+    async function fetchPOI(lat, lng) {
+      try {
+        const r = await fetch('/api/poi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat, lng }),
+        });
+        const data = await r.json();
+        const el = document.getElementById('nearby-poi');
+        if (!el) return;
+        const places = data.places || [];
+        if (!places.length) {
+          el.querySelector('.loader')?.replaceWith(htmlToEl('<p class="text-sm text-white/40">Nothing found nearby</p>'));
+          return;
+        }
+        const list = places.map(p => `
+          <div class="flex items-center justify-between py-2">
+            <div class="min-w-0">
+              <div class="text-sm truncate">${escHtml(p.name)}</div>
+              <div class="text-xs text-white/40">${escHtml(p.type || '')}${p.rating ? ' · ★ ' + p.rating : ''}</div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0 ml-2">
+              ${p.open_now === true ? '<span class="text-xs text-green-400">Open</span>'
+                : p.open_now === false ? '<span class="text-xs text-red-400">Closed</span>' : ''}
+              ${p.maps_url ? `<a href="${p.maps_url}" target="_blank" rel="noopener"
+                class="text-xs text-green-400 font-semibold">Maps ↗</a>` : ''}
+            </div>
+          </div>`).join('');
+        el.innerHTML = `<div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Nearby Food &amp; Coffee</div>` + list;
+      } catch {
+        document.getElementById('nearby-poi')?.remove();
+      }
+    }
+
+    // ── Drawer ────────────────────────────────────────────────────────────────
+    function setDrawer(open) {
+      drawerOpen = open;
+      const drawer = document.getElementById('drawer');
+      drawer.style.transform = open ? 'translateY(0)' : 'translateY(100%)';
+    }
+    function toggleDrawer() { setDrawer(!drawerOpen); }
+
+    // ── Offline restore ───────────────────────────────────────────────────────
+    function tryRestoreCachedRoute() {
+      try {
+        const cached = localStorage.getItem('ev_last_route');
+        if (cached) {
+          const data = JSON.parse(cached);
+          // Silently restore the last route on load (no toast)
+          if (data?.polyline && data?.stations) {
+            renderRoute(data);
+          }
+        }
+      } catch {}
+    }
+
+    // ── Utilities ─────────────────────────────────────────────────────────────
+    function setLoading(on) {
+      document.getElementById('btn-search-text').textContent = on ? 'Searching…' : 'Find Charging Route';
+      document.getElementById('btn-spinner').classList.toggle('hidden', !on);
+      document.getElementById('btn-search').disabled = on;
+    }
+
+    function showToast(msg, type = 'error') {
+      const colors = { error: 'bg-red-900/90 text-red-200', info: 'bg-green-900/90 text-green-200' };
+      const toast = document.getElementById('toast');
+      const inner = document.getElementById('toast-inner');
+      inner.className = `rounded-xl px-4 py-3 text-sm font-medium text-center shadow-lg ${colors[type] || colors.error}`;
+      inner.textContent = msg;
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 4000);
+    }
+
+    function escHtml(s) {
+      return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function htmlToEl(html) {
+      const t = document.createElement('template');
+      t.innerHTML = html.trim();
+      return t.content.firstChild;
+    }
+
+    // ── Dark Map Styles ────────────────────────────────────────────────────────
+    const DARK_STYLES = [
+      { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#8a8a9a' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a2e' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2d2d3e' }] },
+      { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#212132' }] },
+      { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3d3d5c' }] },
+      { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#2d2d4e' }] },
+      { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#b0b0c0' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d1b2a' }] },
+      { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#4a6080' }] },
+      { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+      { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+      { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#2d2d3e' }] },
+      { featureType: 'administrative.country', elementType: 'labels.text.fill', stylers: [{ color: '#9d9db0' }] },
+      { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#c0c0d0' }] },
+      { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#1e1e2e' }] },
+    ];
+  </script>
+</body>
+</html>

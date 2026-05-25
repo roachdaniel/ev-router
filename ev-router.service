@@ -1,0 +1,19 @@
+[Unit]
+Description=EV Charging Station Route Mapper
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ev-router
+EnvironmentFile=-/home/pi/.env
+ExecStart=/home/pi/ev-router/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:5002 --timeout 30 wsgi:app
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
