@@ -14,36 +14,16 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            surface: '#161616',
-            card: '#1c1c1e',
-          }
-        }
-      }
+      theme: { extend: { colors: { surface: '#161616', card: '#1c1c1e' } } }
     }
   </script>
   <style>
     * { -webkit-tap-highlight-color: transparent; }
     body { overscroll-behavior: none; }
-    #map { position: fixed; inset: 0; top: var(--header-h, 120px); }
-    #drawer {
-      transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
-      max-height: 70vh;
-    }
-    #detail-sheet {
-      transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
-    }
-    .chip {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 9999px;
-      font-size: 11px;
-      font-weight: 600;
-      background: #2a2a2e;
-      color: #e5e5e5;
-    }
+    #map { position: fixed; inset: 0; top: var(--header-h, 132px); }
+    #drawer { transition: transform 0.3s cubic-bezier(0.4,0,0.2,1); max-height: 72vh; }
+    #detail-sheet { transition: transform 0.3s cubic-bezier(0.4,0,0.2,1); }
+    .chip { display:inline-block; padding:2px 8px; border-radius:9999px; font-size:11px; font-weight:600; background:#2a2a2e; color:#e5e5e5; }
     .status-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
     .dot-green  { background:#22c55e; }
     .dot-yellow { background:#eab308; }
@@ -51,43 +31,52 @@
     .dot-gray   { background:#6b7280; }
     .station-card { border-bottom: 1px solid #2a2a2e; }
     .station-card:last-child { border-bottom: none; }
-    input::placeholder { color: #6b7280; }
-    input:focus { outline: none; }
-    #station-list { overflow-y: auto; max-height: calc(70vh - 56px); }
-    .badge-app { background: #7f1d1d; color: #fca5a5; }
-    .badge-free { background: #14532d; color: #86efac; }
+    input[type="text"]::placeholder { color: #6b7280; }
+    input[type="text"]:focus { outline: none; }
+    .badge-app  { background:#7f1d1d; color:#fca5a5; }
+    .badge-free { background:#14532d; color:#86efac; }
     .loader { border:3px solid #2a2a2e; border-top-color:#22c55e; border-radius:50%; width:20px; height:20px; animation:spin .8s linear infinite; }
     @keyframes spin { to { transform:rotate(360deg); } }
+    .timeline-line { width:2px; background:#2a2a2e; flex-shrink:0; min-height:36px; }
+    .plan-stop { cursor:pointer; }
+    .plan-stop:active { opacity:0.65; }
+    .tab-btn { flex:1; padding:8px 0; font-size:12px; font-weight:600; text-align:center; border-bottom:2px solid transparent; transition:color 0.15s, border-color 0.15s; }
+    .tab-active { color:#22c55e; border-bottom-color:#22c55e; }
+    .tab-inactive { color:rgba(255,255,255,0.35); }
+    input[type="range"] { cursor:pointer; }
   </style>
 </head>
 <body class="bg-[#0d0d0d] text-white select-none">
 
   <!-- ── HEADER ── -->
   <div id="header" class="fixed top-0 left-0 right-0 z-50 bg-[#0d0d0d]/95 backdrop-blur-sm px-4 pt-3 pb-2 space-y-2">
-    <!-- Title row -->
     <div class="flex items-center justify-between">
       <span class="text-base font-bold tracking-tight">⚡ EV Router</span>
       <button id="btn-profile" onclick="openProfileModal()"
         class="text-xs font-semibold px-3 py-1 rounded-full bg-surface border border-white/10 text-green-400">
-        All Connectors
+        CCS
       </button>
     </div>
-    <!-- Origin input -->
     <div class="flex items-center gap-2 bg-surface rounded-xl px-3 py-2">
       <span class="text-green-500 text-xs font-bold w-4">A</span>
       <input id="origin-input" type="text" placeholder="From…"
         class="flex-1 bg-transparent text-sm text-white min-w-0">
     </div>
-    <!-- Destination input -->
     <div class="flex items-center gap-2 bg-surface rounded-xl px-3 py-2">
       <span class="text-red-400 text-xs font-bold w-4">B</span>
       <input id="dest-input" type="text" placeholder="To…"
         class="flex-1 bg-transparent text-sm text-white min-w-0">
     </div>
-    <!-- Search button -->
+    <!-- Battery slider -->
+    <div class="flex items-center gap-2 px-1">
+      <span class="text-xs text-white/40 w-14 shrink-0">Starting</span>
+      <input type="range" id="battery-slider" min="10" max="100" step="5" value="80"
+             class="flex-1 accent-green-500" style="height:20px" oninput="updateBatteryDisplay()">
+      <span id="battery-pct" class="text-xs font-bold text-green-400 w-8 text-right">80%</span>
+    </div>
     <button id="btn-search" onclick="searchRoute()"
       class="w-full py-2.5 rounded-xl bg-green-600 active:bg-green-700 text-sm font-semibold flex items-center justify-center gap-2">
-      <span id="btn-search-text">Find Charging Route</span>
+      <span id="btn-search-text">Plan Route</span>
       <div id="btn-spinner" class="loader hidden"></div>
     </button>
   </div>
@@ -95,22 +84,27 @@
   <!-- ── MAP ── -->
   <div id="map"></div>
 
-  <!-- ── STATION DRAWER ── -->
+  <!-- ── DRAWER ── -->
   <div id="drawer"
     class="fixed bottom-0 left-0 right-0 z-40 bg-surface rounded-t-2xl transform translate-y-full"
     style="padding-bottom: env(safe-area-inset-bottom);">
     <!-- Handle -->
-    <div id="drawer-handle"
-      class="flex flex-col items-center pt-2 pb-1 cursor-pointer"
-      onclick="toggleDrawer()">
+    <div id="drawer-handle" class="flex flex-col items-center pt-2 pb-1 cursor-pointer" onclick="toggleDrawer()">
       <div class="w-10 h-1 rounded-full bg-white/20 mb-2"></div>
       <div class="flex items-center justify-between w-full px-4 pb-1">
         <span id="drawer-title" class="text-sm font-semibold text-white/80">Charging Stations</span>
         <span id="drawer-count" class="text-xs text-white/40"></span>
       </div>
     </div>
-    <!-- Station list -->
-    <div id="station-list" class="overflow-y-auto"></div>
+    <!-- Tabs (hidden until route loaded) -->
+    <div id="drawer-tabs" class="hidden flex border-b border-white/10">
+      <button id="tab-plan" class="tab-btn tab-active" onclick="switchTab('plan')">Trip Plan</button>
+      <button id="tab-stations" class="tab-btn tab-inactive" onclick="switchTab('stations')">All Stations</button>
+    </div>
+    <!-- Trip Plan panel -->
+    <div id="panel-plan" class="overflow-y-auto hidden" style="max-height:calc(72vh - 108px)"></div>
+    <!-- All Stations panel -->
+    <div id="panel-stations" class="overflow-y-auto" style="max-height:calc(72vh - 60px)"></div>
   </div>
 
   <!-- ── STATION DETAIL SHEET ── -->
@@ -126,16 +120,42 @@
 
   <!-- ── VEHICLE PROFILE MODAL ── -->
   <div id="profile-modal" class="fixed inset-0 z-50 bg-black/70 hidden items-center justify-center px-6">
-    <div class="bg-card rounded-2xl p-6 w-full max-w-xs space-y-4">
-      <h2 class="font-bold text-base">Connector Type</h2>
-      <p class="text-xs text-white/50">Filter stations to your vehicle's connector</p>
-      <div class="space-y-2" id="connector-options">
-        <!-- rendered by JS -->
+    <div class="bg-card rounded-2xl p-6 w-full max-w-xs space-y-5 overflow-y-auto" style="max-height:85vh">
+      <div>
+        <h2 class="font-bold text-base">Vehicle Settings</h2>
+        <p class="text-xs text-white/40 mt-0.5">Configure for your EV</p>
       </div>
-      <button onclick="closeProfileModal()"
-        class="w-full py-2.5 rounded-xl bg-green-600 text-sm font-semibold mt-2">
-        Done
-      </button>
+
+      <!-- Connector -->
+      <div>
+        <div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Connector Type</div>
+        <div class="space-y-1" id="connector-options"></div>
+      </div>
+
+      <!-- Range -->
+      <div>
+        <div class="flex justify-between items-center mb-2">
+          <div class="text-xs font-semibold text-white/40 uppercase tracking-wider">Highway Range</div>
+          <span id="range-display" class="text-xs font-bold text-green-400">240 mi</span>
+        </div>
+        <input type="range" id="range-slider" min="100" max="400" step="10" value="240"
+               class="w-full accent-green-500" oninput="updateRangeDisplay()">
+        <div class="text-xs text-white/30 mt-1">Adjust for real-world highway conditions</div>
+      </div>
+
+      <!-- Arrival buffer -->
+      <div>
+        <div class="flex justify-between items-center mb-2">
+          <div class="text-xs font-semibold text-white/40 uppercase tracking-wider">Min Arrival Charge</div>
+          <span id="arrival-display" class="text-xs font-bold text-green-400">20%</span>
+        </div>
+        <input type="range" id="arrival-slider" min="5" max="40" step="5" value="20"
+               class="w-full accent-green-500" oninput="updateArrivalDisplay()">
+        <div class="text-xs text-white/30 mt-1">Keep this charge when you arrive</div>
+      </div>
+
+      <button onclick="saveProfileFromModal()"
+        class="w-full py-2.5 rounded-xl bg-green-600 text-sm font-semibold">Done</button>
     </div>
   </div>
 
@@ -144,7 +164,6 @@
     <div id="toast-inner" class="rounded-xl px-4 py-3 text-sm font-medium text-center shadow-lg"></div>
   </div>
 
-  <!-- Google Maps JS — key injected server-side, libraries loaded at runtime -->
   <script>
     window.initMap = function() {};
   </script>
@@ -156,8 +175,10 @@
     let routePolyline = null;
     let stationMarkers = [];
     let allStations = [];
+    let planStops = [];
     let originLL = null, destLL = null;
     let drawerOpen = false;
+    let lastRouteData = null;
     let profile = loadProfile();
 
     const CONNECTOR_OPTIONS = ['All', 'CCS', 'NACS', 'CHAdeMO', 'J1772'];
@@ -178,9 +199,7 @@
         styles: DARK_STYLES,
       });
 
-      map.addListener('click', () => {
-        if (drawerOpen) setDrawer(false);
-      });
+      map.addListener('click', () => { if (drawerOpen) setDrawer(false); });
 
       originAC = new google.maps.places.Autocomplete(
         document.getElementById('origin-input'),
@@ -190,7 +209,6 @@
         document.getElementById('dest-input'),
         { types: ['geocode'], componentRestrictions: { country: 'us' } }
       );
-
       originAC.addListener('place_changed', () => {
         const p = originAC.getPlace();
         if (p?.geometry) originLL = { lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
@@ -200,7 +218,6 @@
         if (p?.geometry) destLL = { lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
       });
 
-      // Prevent map pan while autocomplete dropdown is open
       ['origin-input', 'dest-input'].forEach(id => {
         const el = document.getElementById(id);
         el.addEventListener('focus', () => map.setOptions({ gestureHandling: 'none' }));
@@ -210,7 +227,6 @@
       renderProfileButton();
       tryRestoreCachedRoute();
 
-      // Register service worker
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js').catch(() => {});
       }
@@ -218,8 +234,9 @@
 
     // ── Profile ───────────────────────────────────────────────────────────────
     function loadProfile() {
-      try { return JSON.parse(localStorage.getItem('ev_profile')) || { connector: 'CCS' }; }
-      catch { return { connector: 'CCS' }; }
+      const defaults = { connector: 'CCS', range_miles: 240, arrival_pct: 20 };
+      try { return { ...defaults, ...JSON.parse(localStorage.getItem('ev_profile') || '{}') }; }
+      catch { return defaults; }
     }
     function saveProfile(p) {
       profile = p;
@@ -228,20 +245,41 @@
     }
     function renderProfileButton() {
       document.getElementById('btn-profile').textContent =
-        profile.connector === 'All' ? 'All Connectors' : profile.connector;
+        profile.connector === 'All' ? 'All' : profile.connector;
     }
     function openProfileModal() {
-      const el = document.getElementById('connector-options');
-      el.innerHTML = CONNECTOR_OPTIONS.map(c => `
-        <label class="flex items-center gap-3 py-2 cursor-pointer">
+      document.getElementById('connector-options').innerHTML = CONNECTOR_OPTIONS.map(c => `
+        <label class="flex items-center gap-3 py-1.5 cursor-pointer">
           <input type="radio" name="connector" value="${c}" ${profile.connector === c ? 'checked' : ''}
-            onchange="saveProfile({connector:'${c}'})" class="accent-green-500 w-4 h-4">
+            class="accent-green-500 w-4 h-4">
           <span class="text-sm">${c === 'All' ? 'All connectors' : c}</span>
         </label>`).join('');
+      const rs = document.getElementById('range-slider');
+      const as = document.getElementById('arrival-slider');
+      rs.value = profile.range_miles || 240;
+      as.value = profile.arrival_pct || 20;
+      updateRangeDisplay();
+      updateArrivalDisplay();
       document.getElementById('profile-modal').classList.replace('hidden', 'flex');
     }
     function closeProfileModal() {
       document.getElementById('profile-modal').classList.replace('flex', 'hidden');
+    }
+    function saveProfileFromModal() {
+      const connector   = document.querySelector('input[name="connector"]:checked')?.value || profile.connector;
+      const range_miles = parseInt(document.getElementById('range-slider').value);
+      const arrival_pct = parseInt(document.getElementById('arrival-slider').value);
+      saveProfile({ connector, range_miles, arrival_pct });
+      closeProfileModal();
+    }
+    function updateRangeDisplay() {
+      document.getElementById('range-display').textContent = document.getElementById('range-slider').value + ' mi';
+    }
+    function updateArrivalDisplay() {
+      document.getElementById('arrival-display').textContent = document.getElementById('arrival-slider').value + '%';
+    }
+    function updateBatteryDisplay() {
+      document.getElementById('battery-pct').textContent = document.getElementById('battery-slider').value + '%';
     }
 
     // ── Route Search ──────────────────────────────────────────────────────────
@@ -252,22 +290,31 @@
 
       setLoading(true);
 
-      // Geocode if Autocomplete didn't fire (user typed without selecting)
       if (!originLL) originLL = await geocode(originText);
       if (!destLL)   destLL   = await geocode(destText);
       if (!originLL || !destLL) { setLoading(false); return; }
+
+      const starting_pct = parseInt(document.getElementById('battery-slider').value);
 
       try {
         const res = await fetch('/api/route', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ origin: originLL, destination: destLL }),
+          body: JSON.stringify({
+            origin:       originLL,
+            destination:  destLL,
+            starting_pct,
+            arrival_pct:  profile.arrival_pct  || 20,
+            range_miles:  profile.range_miles   || 240,
+          }),
         });
         const data = await res.json();
         if (!res.ok) { showToast(data.error || 'Route error'); return; }
 
-        renderRoute(data);
-        localStorage.setItem('ev_last_route', JSON.stringify(data));
+        renderRoute(data, originText, destText);
+        localStorage.setItem('ev_last_route', JSON.stringify({
+          ...data, origin_name: originText, dest_name: destText, starting_pct,
+        }));
       } catch {
         showToast('Network error — check connection');
       } finally {
@@ -285,21 +332,18 @@
     }
 
     // ── Render Route ──────────────────────────────────────────────────────────
-    function renderRoute(data) {
-      allStations = data.stations || [];
+    function renderRoute(data, originName, destName) {
+      allStations  = data.stations || [];
+      planStops    = data.trip_plan?.stops || [];
+      lastRouteData = data;
 
-      // Filter by connector profile
-      const filtered = profile.connector === 'All'
-        ? allStations
-        : allStations.filter(s =>
-            s.connectors.some(c => c.label === profile.connector));
+      const filtered   = filterByConnector(allStations);
+      const planIds    = new Set(planStops.map(s => s.place_id));
 
-      // Clear old markers + polyline
       stationMarkers.forEach(m => m.setMap(null));
       stationMarkers = [];
       if (routePolyline) routePolyline.setMap(null);
 
-      // Draw route
       const path = google.maps.geometry.encoding.decodePath(data.polyline);
       routePolyline = new google.maps.Polyline({
         path, map,
@@ -308,23 +352,23 @@
         strokeWeight: 4,
       });
 
-      // Fit bounds
       const bounds = new google.maps.LatLngBounds();
       path.forEach(p => bounds.extend(p));
-      map.fitBounds(bounds, { top: 16, bottom: 180, left: 16, right: 16 });
+      map.fitBounds(bounds, { top: 16, bottom: 200, left: 16, right: 16 });
 
-      // Place markers
       filtered.forEach(station => {
+        const isPlan = planIds.has(station.place_id);
         const marker = new google.maps.Marker({
           position: { lat: station.lat, lng: station.lng },
           map,
+          zIndex: isPlan ? 10 : 1,
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
-            scale: 9,
-            fillColor: STATUS_COLORS[station.status_color] || '#6b7280',
+            scale: isPlan ? 12 : 7,
+            fillColor: isPlan ? '#22c55e' : (STATUS_COLORS[station.status_color] || '#6b7280'),
             fillOpacity: 1,
             strokeColor: '#ffffff',
-            strokeWeight: 2,
+            strokeWeight: isPlan ? 3 : 1.5,
           },
           title: station.name,
         });
@@ -332,24 +376,178 @@
         stationMarkers.push(marker);
       });
 
-      // Station list
+      const startPct = data.starting_pct ?? parseInt(document.getElementById('battery-slider').value);
+      renderTripPlan(data.trip_plan, data, originName || '', destName || '', startPct);
       renderStationList(filtered, data.distance_text, data.duration_text);
+
+      document.getElementById('drawer-tabs').classList.remove('hidden');
+      switchTab('plan');
       setDrawer(true);
     }
 
-    function renderStationList(stations, distText, durText) {
-      const list = document.getElementById('station-list');
-      const count = document.getElementById('drawer-count');
-      const title = document.getElementById('drawer-title');
-      title.textContent = `${distText} · ${durText}`;
-      count.textContent = `${stations.length} station${stations.length !== 1 ? 's' : ''}`;
+    function filterByConnector(stations) {
+      return profile.connector === 'All'
+        ? stations
+        : stations.filter(s => s.connectors.some(c => c.label === profile.connector));
+    }
 
-      if (!stations.length) {
-        list.innerHTML = '<p class="text-white/40 text-sm text-center py-8">No charging stations found along this route</p>';
+    // ── Trip Plan ─────────────────────────────────────────────────────────────
+    function renderTripPlan(plan, data, originName, destName, startPct) {
+      const panel = document.getElementById('panel-plan');
+
+      if (!plan) {
+        panel.innerHTML = '<p class="text-white/40 text-sm text-center py-8">Planning data unavailable</p>';
         return;
       }
 
-      list.innerHTML = stations.map((s, i) => `
+      if (!plan.possible) {
+        panel.innerHTML = `
+          <div class="px-4 py-8 text-center space-y-2">
+            <div class="text-red-400 text-sm font-semibold">Trip not possible</div>
+            <div class="text-xs text-white/40">${escHtml(plan.error || 'No charging stations reachable')}</div>
+            <div class="text-xs text-white/30 mt-2">Try raising starting charge or adjusting your range estimate in settings.</div>
+          </div>`;
+        return;
+      }
+
+      const stops          = plan.stops || [];
+      const avgMph         = data.total_miles / (data.duration_secs / 3600);
+      const totalChargeMins = stops.reduce((a, s) => a + s.charge_min, 0);
+      const totalDriveMins  = Math.round(data.duration_secs / 60);
+      const rangeAtStart    = Math.round(startPct / 100 * (profile.range_miles || 240));
+
+      let html = '<div class="px-4 py-4">';
+
+      // ── Origin node ──────────────────────────────────────────────────────────
+      const seg0Miles = stops.length > 0 ? Math.round(stops[0].route_miles) : Math.round(data.total_miles);
+      const seg0Mins  = Math.round(seg0Miles / avgMph * 60);
+
+      html += `
+        <div class="flex gap-3 items-start">
+          <div class="flex flex-col items-center shrink-0">
+            <div class="w-7 h-7 rounded-full bg-green-700 flex items-center justify-center text-xs font-bold">A</div>
+            ${stops.length > 0 ? '<div class="timeline-line my-1"></div>' : ''}
+          </div>
+          <div class="pt-1 ${stops.length > 0 ? 'pb-1' : 'pb-2'} flex-1 min-w-0">
+            <div class="text-sm font-semibold truncate">${escHtml(originName)}</div>
+            <div class="text-xs text-white/40 mt-0.5">Depart · ${startPct}% · ~${rangeAtStart} mi range</div>
+            ${stops.length > 0 ? `<div class="text-xs text-white/25 mt-1.5">↓ ${seg0Miles} mi · ~${formatDur(seg0Mins)}</div>` : ''}
+          </div>
+        </div>`;
+
+      // ── Charging stops ───────────────────────────────────────────────────────
+      stops.forEach((stop, i) => {
+        const nextMiles  = i < stops.length - 1 ? stops[i + 1].route_miles : data.total_miles;
+        const segMiles   = Math.round(nextMiles - stop.route_miles);
+        const segMins    = Math.round(segMiles / avgMph * 60);
+        const arrPct     = Math.round(stop.arrive_pct);
+        const depPct     = Math.round(stop.depart_pct);
+
+        html += `
+          <div class="flex gap-3 items-start plan-stop" onclick="openDetail(planStops[${i}])">
+            <div class="flex flex-col items-center shrink-0">
+              <div class="w-7 h-7 rounded-full bg-[#161616] border-2 border-green-500 flex items-center justify-center text-green-400 text-sm">⚡</div>
+              <div class="timeline-line my-1"></div>
+            </div>
+            <div class="pt-1 pb-1 flex-1 min-w-0">
+              <div class="flex items-start justify-between gap-2">
+                <div class="text-sm font-semibold leading-snug flex-1 min-w-0 truncate">${escHtml(stop.name)}</div>
+                ${stop.max_kw ? `<span class="text-xs font-bold text-green-400 shrink-0">${stop.max_kw} kW</span>` : ''}
+              </div>
+              <div class="text-xs text-white/50 mt-0.5">Arrive ${arrPct}% → Charge to ${depPct}% · ~${stop.charge_min} min</div>
+              <div class="text-xs text-green-400/70 mt-0.5">${escHtml(stop.reason)}</div>
+              <div id="plan-poi-${i}" class="mt-1.5 space-y-0.5"></div>
+              <div class="text-xs text-white/25 mt-2">↓ ${segMiles} mi · ~${formatDur(segMins)}</div>
+            </div>
+          </div>`;
+      });
+
+      // ── Destination node ─────────────────────────────────────────────────────
+      const arrPctFinal   = Math.round(plan.arrival_pct);
+      const reserveMiFinal = Math.round(plan.arrival_pct / 100 * (profile.range_miles || 240));
+
+      html += `
+        <div class="flex gap-3 items-start">
+          <div class="w-7 h-7 rounded-full bg-red-700 flex items-center justify-center text-xs font-bold shrink-0">B</div>
+          <div class="pt-1 flex-1 min-w-0">
+            <div class="text-sm font-semibold truncate">${escHtml(destName)}</div>
+            <div class="text-xs text-white/40 mt-0.5">Arrive ~${arrPctFinal}% · ~${reserveMiFinal} mi reserve</div>
+          </div>
+        </div>`;
+
+      // ── Summary bar ──────────────────────────────────────────────────────────
+      if (stops.length === 0) {
+        html += `
+          <div class="mt-4 p-3 rounded-xl bg-green-900/30 border border-green-800/40 text-xs text-green-400 text-center font-medium">
+            ✓ No charging stop needed on this route
+          </div>`;
+      } else {
+        html += `
+          <div class="mt-4 p-3 rounded-xl bg-card text-xs text-white/40 text-center">
+            ~${formatDur(totalDriveMins)} driving · ${formatDur(totalChargeMins)} charging · ${formatDur(totalDriveMins + totalChargeMins)} total
+          </div>`;
+      }
+
+      html += '</div>';
+      panel.innerHTML = html;
+
+      stops.forEach((stop, i) => {
+        if (stop.lat && stop.lng) loadPlanPOI(stop.lat, stop.lng, i);
+      });
+    }
+
+    async function loadPlanPOI(lat, lng, index) {
+      const el = document.getElementById(`plan-poi-${index}`);
+      if (!el) return;
+      try {
+        const r = await fetch('/api/poi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat, lng }),
+        });
+        const data = await r.json();
+        const places = (data.places || []).slice(0, 3);
+        if (!places.length) { el.remove(); return; }
+        el.innerHTML = places.map(p => `
+          <div class="flex items-center justify-between">
+            <div class="text-xs text-white/35 truncate pr-2 min-w-0">
+              ${escHtml(p.name)}${p.rating ? ' · ★' + p.rating : ''}
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${p.open_now === true  ? '<span class="text-xs text-green-400">Open</span>'  : ''}
+              ${p.open_now === false ? '<span class="text-xs text-red-400">Closed</span>' : ''}
+              ${p.maps_url ? `<a href="${p.maps_url}" target="_blank" rel="noopener" class="text-xs text-green-400 font-semibold">↗</a>` : ''}
+            </div>
+          </div>`).join('');
+      } catch { el?.remove(); }
+    }
+
+    function switchTab(name) {
+      const isPlan = name === 'plan';
+      document.getElementById('panel-plan').classList.toggle('hidden', !isPlan);
+      document.getElementById('panel-stations').classList.toggle('hidden', isPlan);
+      document.getElementById('tab-plan').className     = 'tab-btn ' + (isPlan ? 'tab-active' : 'tab-inactive');
+      document.getElementById('tab-stations').className = 'tab-btn ' + (isPlan ? 'tab-inactive' : 'tab-active');
+    }
+
+    function formatDur(min) {
+      if (min < 60) return `${min} min`;
+      const h = Math.floor(min / 60), m = min % 60;
+      return m > 0 ? `${h}h ${m}min` : `${h}h`;
+    }
+
+    // ── Station list (All Stations tab) ──────────────────────────────────────
+    function renderStationList(stations, distText, durText) {
+      const panel = document.getElementById('panel-stations');
+      document.getElementById('drawer-title').textContent = `${distText} · ${durText}`;
+      document.getElementById('drawer-count').textContent = `${stations.length} station${stations.length !== 1 ? 's' : ''}`;
+
+      if (!stations.length) {
+        panel.innerHTML = '<p class="text-white/40 text-sm text-center py-8">No charging stations found along this route</p>';
+        return;
+      }
+
+      panel.innerHTML = stations.map(s => `
         <div class="station-card px-4 py-3 active:bg-white/5 cursor-pointer"
              onclick="openDetail(allStations[${allStations.indexOf(s)}])">
           <div class="flex items-start gap-3">
@@ -363,9 +561,7 @@
               <div class="flex flex-wrap gap-1 mt-1.5">
                 ${s.connectors.map(c => `<span class="chip">${c.label}</span>`).join('')}
                 ${s.app_required ? '<span class="chip badge-app">App req\'d</span>' : ''}
-                ${s.live_data && s.available !== null
-                  ? `<span class="chip badge-free">${s.available} avail</span>`
-                  : ''}
+                ${s.live_data && s.available !== null ? `<span class="chip badge-free">${s.available} avail</span>` : ''}
               </div>
             </div>
           </div>
@@ -377,30 +573,29 @@
       document.getElementById('detail-network').textContent = station.name;
       const body = document.getElementById('detail-body');
 
-      const statusText = { green: 'Available', yellow: 'Likely busy', red: 'Offline', gray: 'Status unknown' };
-      const statusTextColor = { green: 'text-green-400', yellow: 'text-yellow-400', red: 'text-red-400', gray: 'text-white/40' };
+      const statusText  = { green:'Available', yellow:'Likely busy', red:'Offline', gray:'Status unknown' };
+      const statusColor = { green:'text-green-400', yellow:'text-yellow-400', red:'text-red-400', gray:'text-white/40' };
 
       const nearbyStations = allStations
         .filter(s => s.place_id !== station.place_id)
-        .map(s => {
-          const d = google.maps.geometry.spherical.computeDistanceBetween(
+        .map(s => ({
+          ...s,
+          dist: google.maps.geometry.spherical.computeDistanceBetween(
             new google.maps.LatLng(station.lat, station.lng),
             new google.maps.LatLng(s.lat, s.lng)
-          ) / 1609.34;
-          return { ...s, dist: d };
-        })
+          ) / 1609.34,
+        }))
         .sort((a, b) => a.dist - b.dist)
         .slice(0, 3);
 
       const mapsLink = `https://www.google.com/maps/search/?api=1&query=${station.lat},${station.lng}`;
 
       body.innerHTML = `
-        <!-- Status banner -->
         <div class="rounded-xl bg-card p-4 space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
               <div class="status-dot dot-${station.status_color}"></div>
-              <span class="text-sm font-semibold ${statusTextColor[station.status_color]}">${statusText[station.status_color]}</span>
+              <span class="text-sm font-semibold ${statusColor[station.status_color]}">${statusText[station.status_color]}</span>
             </div>
             ${station.live_data
               ? `<span class="text-xs text-white/40">${station.available !== null ? station.available + ' of ' + station.total_ports + ' available' : 'Live data'}</span>`
@@ -408,18 +603,15 @@
           </div>
           ${station.max_kw ? `<div class="text-2xl font-bold text-green-400">${station.max_kw} <span class="text-sm font-normal text-white/60">kW max</span></div>` : ''}
           <a href="${mapsLink}" target="_blank" rel="noopener"
-            class="block text-sm text-white/60 hover:text-white active:text-white">${escHtml(station.address)} ↗</a>
+            class="block text-sm text-white/60 active:text-white">${escHtml(station.address)} ↗</a>
         </div>
 
-        <!-- Connectors -->
         <div class="rounded-xl bg-card p-4">
           <div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">Connectors</div>
           ${station.connectors.length
             ? station.connectors.map(c => `
               <div class="flex items-center justify-between py-1.5">
-                <div class="flex items-center gap-2">
-                  <span class="chip">${c.label}</span>
-                </div>
+                <span class="chip">${c.label}</span>
                 <div class="text-right">
                   <span class="text-sm font-semibold">${c.kw ? c.kw + ' kW' : '—'}</span>
                   <span class="text-xs text-white/40 ml-2">${c.count} port${c.count !== 1 ? 's' : ''}</span>
@@ -428,7 +620,6 @@
             : '<p class="text-sm text-white/40">Connector info unavailable</p>'}
         </div>
 
-        <!-- Access -->
         <div class="rounded-xl bg-card p-4 space-y-2">
           <div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-1">Access</div>
           ${station.app_required
@@ -446,13 +637,11 @@
             : ''}
         </div>
 
-        <!-- Nearby food (lazy loaded) -->
         <div id="nearby-poi" class="rounded-xl bg-card p-4">
           <div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">Nearby Food &amp; Coffee</div>
           <div class="flex justify-center py-2"><div class="loader"></div></div>
         </div>
 
-        <!-- Nearby stations -->
         ${nearbyStations.length ? `
         <div class="rounded-xl bg-card p-4">
           <div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">Nearby Alternatives</div>
@@ -468,14 +657,9 @@
         </div>` : ''}
       `;
 
-      // Show sheet
       document.getElementById('detail-sheet').style.transform = 'translateY(0)';
       document.getElementById('detail-sheet').scrollTop = 0;
-
-      // Lazy load POI
       fetchPOI(station.lat, station.lng);
-
-      // Pan map to station
       if (map) map.panTo({ lat: station.lat, lng: station.lng });
     }
 
@@ -498,20 +682,19 @@
           el.querySelector('.loader')?.replaceWith(htmlToEl('<p class="text-sm text-white/40">Nothing found nearby</p>'));
           return;
         }
-        const list = places.map(p => `
-          <div class="flex items-center justify-between py-2">
-            <div class="min-w-0">
-              <div class="text-sm truncate">${escHtml(p.name)}</div>
-              <div class="text-xs text-white/40">${escHtml(p.type || '')}${p.rating ? ' · ★ ' + p.rating : ''}</div>
-            </div>
-            <div class="flex items-center gap-2 shrink-0 ml-2">
-              ${p.open_now === true ? '<span class="text-xs text-green-400">Open</span>'
-                : p.open_now === false ? '<span class="text-xs text-red-400">Closed</span>' : ''}
-              ${p.maps_url ? `<a href="${p.maps_url}" target="_blank" rel="noopener"
-                class="text-xs text-green-400 font-semibold">Maps ↗</a>` : ''}
-            </div>
-          </div>`).join('');
-        el.innerHTML = `<div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Nearby Food &amp; Coffee</div>` + list;
+        el.innerHTML = `<div class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Nearby Food &amp; Coffee</div>` +
+          places.map(p => `
+            <div class="flex items-center justify-between py-2">
+              <div class="min-w-0">
+                <div class="text-sm truncate">${escHtml(p.name)}</div>
+                <div class="text-xs text-white/40">${escHtml(p.type || '')}${p.rating ? ' · ★ ' + p.rating : ''}</div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0 ml-2">
+                ${p.open_now === true  ? '<span class="text-xs text-green-400">Open</span>'  : ''}
+                ${p.open_now === false ? '<span class="text-xs text-red-400">Closed</span>' : ''}
+                ${p.maps_url ? `<a href="${p.maps_url}" target="_blank" rel="noopener" class="text-xs text-green-400 font-semibold">Maps ↗</a>` : ''}
+              </div>
+            </div>`).join('');
       } catch {
         document.getElementById('nearby-poi')?.remove();
       }
@@ -520,8 +703,7 @@
     // ── Drawer ────────────────────────────────────────────────────────────────
     function setDrawer(open) {
       drawerOpen = open;
-      const drawer = document.getElementById('drawer');
-      drawer.style.transform = open ? 'translateY(0)' : 'translateY(100%)';
+      document.getElementById('drawer').style.transform = open ? 'translateY(0)' : 'translateY(100%)';
     }
     function toggleDrawer() { setDrawer(!drawerOpen); }
 
@@ -529,19 +711,22 @@
     function tryRestoreCachedRoute() {
       try {
         const cached = localStorage.getItem('ev_last_route');
-        if (cached) {
-          const data = JSON.parse(cached);
-          // Silently restore the last route on load (no toast)
-          if (data?.polyline && data?.stations) {
-            renderRoute(data);
-          }
+        if (!cached) return;
+        const data = JSON.parse(cached);
+        if (!data?.polyline || !data?.stations) return;
+        if (data.origin_name) document.getElementById('origin-input').value = data.origin_name;
+        if (data.dest_name)   document.getElementById('dest-input').value   = data.dest_name;
+        if (data.starting_pct) {
+          document.getElementById('battery-slider').value = data.starting_pct;
+          updateBatteryDisplay();
         }
+        renderRoute(data, data.origin_name || '', data.dest_name || '', data.starting_pct || 80);
       } catch {}
     }
 
     // ── Utilities ─────────────────────────────────────────────────────────────
     function setLoading(on) {
-      document.getElementById('btn-search-text').textContent = on ? 'Searching…' : 'Find Charging Route';
+      document.getElementById('btn-search-text').textContent = on ? 'Planning…' : 'Plan Route';
       document.getElementById('btn-spinner').classList.toggle('hidden', !on);
       document.getElementById('btn-search').disabled = on;
     }
@@ -549,9 +734,9 @@
     function showToast(msg, type = 'error') {
       const colors = { error: 'bg-red-900/90 text-red-200', info: 'bg-green-900/90 text-green-200' };
       const toast = document.getElementById('toast');
-      const inner = document.getElementById('toast-inner');
-      inner.className = `rounded-xl px-4 py-3 text-sm font-medium text-center shadow-lg ${colors[type] || colors.error}`;
-      inner.textContent = msg;
+      document.getElementById('toast-inner').className =
+        `rounded-xl px-4 py-3 text-sm font-medium text-center shadow-lg ${colors[type] || colors.error}`;
+      document.getElementById('toast-inner').textContent = msg;
       toast.classList.remove('hidden');
       setTimeout(() => toast.classList.add('hidden'), 4000);
     }
@@ -566,7 +751,7 @@
       return t.content.firstChild;
     }
 
-    // ── Dark Map Styles ────────────────────────────────────────────────────────
+    // ── Dark Map Styles ───────────────────────────────────────────────────────
     const DARK_STYLES = [
       { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
       { elementType: 'labels.text.fill', stylers: [{ color: '#8a8a9a' }] },

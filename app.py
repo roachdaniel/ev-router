@@ -14,6 +14,12 @@ GEOCODE_URL       = 'https://maps.googleapis.com/maps/api/geocode/json'
 PLACES_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText'
 PLACES_NEARBY_URL = 'https://places.googleapis.com/v1/places:searchNearby'
 
+VEHICLE_DEFAULTS = {
+    'range_miles':   240,   # conservative highway range (BMW i4 M50 EPA is 270)
+    'battery_kwh':   83.9,
+    'max_charge_kw': 200,
+}
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -68,6 +74,106 @@ def _sample_polyline(coords: list, interval_miles: float = 35) -> list:
     if coords[-1] not in samples:
         samples.append(coords[-1])
     return samples
+
+
+def _station_route_position(coords: list, lat: float, lng: float) -> float:
+    """Return miles from route start to the closest point on the polyline to this lat/lng."""
+    min_perp = float('inf')
+    best_miles = 0.0
+    cumulative = 0.0
+    for i in range(1, len(coords)):
+        a, b = coords[i - 1], coords[i]
+        ax, ay = a[1], a[0]   # (lng, lat)
+        bx, by = b[1], b[0]
+        dx, dy = bx - ax, by - ay
+        seg_sq = dx * dx + dy * dy
+        t = 0.0 if seg_sq < 1e-12 else max(0.0, min(1.0, ((lng - ax) * dx + (lat - ay) * dy) / seg_sq))
+        px, py = ax + t * dx, ay + t * dy
+        perp = math.sqrt((lng - px) ** 2 + (lat - py) ** 2)
+        dlat = math.radians(b[0] - a[0])
+        dlng = math.radians(b[1] - a[1])
+        h = (math.sin(dlat / 2) ** 2 +
+             math.cos(math.radians(a[0])) * math.cos(math.radians(b[0])) * math.sin(dlng / 2) ** 2)
+        seg_miles = 3958.8 * 2 * math.asin(math.sqrt(h))
+        if perp < min_perp:
+            min_perp = perp
+            best_miles = cumulative + t * seg_miles
+        cumulative += seg_miles
+    return best_miles
+
+
+def _plan_trip(stations: list, total_miles: float,
+               starting_pct: float, arrival_pct: float,
+               vehicle: dict) -> dict:
+    """Select optimal charging stops along the route."""
+    range_miles   = vehicle['range_miles']
+    battery_kwh   = vehicle['battery_kwh']
+    max_kw        = vehicle['max_charge_kw']
+    safety_pct    = 10.0
+    miles_per_pct = range_miles / 100.0
+
+    ordered = sorted(
+        [s for s in stations if s.get('route_miles') is not None],
+        key=lambda s: s['route_miles'],
+    )
+
+    stops, cur_pos, cur_pct = [], 0.0, float(starting_pct)
+
+    for _ in range(10):
+        pct_to_dest = (total_miles - cur_pos) / miles_per_pct
+        if cur_pct >= pct_to_dest + arrival_pct:
+            break
+
+        max_reach = cur_pos + (cur_pct - safety_pct) * miles_per_pct
+        reachable = [s for s in ordered if cur_pos < s['route_miles'] <= max_reach]
+        if not reachable:
+            return {
+                'stops': stops, 'arrival_pct': None, 'possible': False,
+                'error': 'No charging stations reachable — try starting with more charge or adjusting your range estimate',
+            }
+
+        # Late-window strategy: stop in the last 35% of reachable range to minimize stop count
+        window_start = cur_pos + (max_reach - cur_pos) * 0.65
+        candidates = [s for s in reachable if s['route_miles'] >= window_start] or reachable
+
+        STATUS_RANK = {'green': 0, 'yellow': 1, 'gray': 2, 'red': 3}
+        candidates.sort(key=lambda s: (
+            -(s.get('max_kw') or 0),
+            STATUS_RANK.get(s.get('status_color', 'gray'), 2),
+        ))
+        chosen = candidates[0]
+
+        arrive_pct = cur_pct - (chosen['route_miles'] - cur_pos) / miles_per_pct
+        remaining  = total_miles - chosen['route_miles']
+        pct_needed = remaining / miles_per_pct + arrival_pct
+        depart_pct = min(100.0, max(80.0, pct_needed + 5))
+
+        kwh_added  = max(0.0, depart_pct - arrive_pct) / 100.0 * battery_kwh
+        eff_kw     = min(chosen.get('max_kw') or 50, max_kw)
+        charge_min = round(kwh_added / eff_kw * 60 * 1.25) if eff_kw > 0 else 0
+
+        best_kw = max((s.get('max_kw') or 0) for s in reachable)
+        if len(reachable) == 1:
+            reason = 'Only charger in range'
+        elif (chosen.get('max_kw') or 0) >= best_kw:
+            reason = f"Fastest in segment · {chosen['max_kw']} kW"
+        else:
+            reason = 'Best available option'
+        if chosen.get('status_color') == 'green' and chosen.get('available'):
+            reason += f" · {chosen['available']} ports free"
+
+        stops.append({
+            **chosen,
+            'arrive_pct': round(arrive_pct, 1),
+            'depart_pct': round(depart_pct, 1),
+            'charge_min': charge_min,
+            'kwh_added':  round(kwh_added, 1),
+            'reason':     reason,
+        })
+        cur_pos, cur_pct = chosen['route_miles'], depart_pct
+
+    final_pct = cur_pct - (total_miles - cur_pos) / miles_per_pct
+    return {'stops': stops, 'arrival_pct': round(final_pct, 1), 'possible': True}
 
 
 def _enrich_station(place: dict) -> dict:
@@ -271,8 +377,11 @@ def geocode():
 @app.post('/api/route')
 def route():
     data = request.get_json(silent=True) or {}
-    origin = data.get('origin')
-    destination = data.get('destination')
+    origin       = data.get('origin')
+    destination  = data.get('destination')
+    starting_pct = float(data.get('starting_pct', 80))
+    arrival_pct  = float(data.get('arrival_pct',  20))
+    range_miles  = float(data.get('range_miles',  VEHICLE_DEFAULTS['range_miles']))
 
     if not origin or not destination:
         return jsonify({'error': 'origin and destination required'}), 400
@@ -291,17 +400,30 @@ def route():
     if directions.get('status') != 'OK':
         return jsonify({'error': 'no route found', 'details': directions.get('status')}), 422
 
-    leg = directions['routes'][0]['legs'][0]
-    encoded = directions['routes'][0]['overview_polyline']['points']
+    leg           = directions['routes'][0]['legs'][0]
+    encoded       = directions['routes'][0]['overview_polyline']['points']
+    total_miles   = leg['distance']['value'] / 1609.34
+    duration_secs = leg['duration']['value']
 
     stations = _get_ev_stations_along_route(encoded)
 
+    coords = _decode_polyline(encoded)
+    for s in stations:
+        if s['lat'] and s['lng']:
+            s['route_miles'] = round(_station_route_position(coords, s['lat'], s['lng']), 2)
+
+    vehicle   = {**VEHICLE_DEFAULTS, 'range_miles': range_miles}
+    trip_plan = _plan_trip(stations, total_miles, starting_pct, arrival_pct, vehicle)
+
     return jsonify({
-        'polyline':        encoded,
-        'distance_text':   leg['distance']['text'],
-        'duration_text':   leg['duration']['text'],
-        'station_count':   len(stations),
-        'stations':        stations,
+        'polyline':       encoded,
+        'distance_text':  leg['distance']['text'],
+        'duration_text':  leg['duration']['text'],
+        'duration_secs':  duration_secs,
+        'total_miles':    round(total_miles, 1),
+        'station_count':  len(stations),
+        'stations':       stations,
+        'trip_plan':      trip_plan,
     })
 
 
