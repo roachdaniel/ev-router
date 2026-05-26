@@ -2,12 +2,21 @@ import math
 import os
 import requests
 from flask import Flask, jsonify, request, render_template, send_from_directory, Response
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 import config
 from lookups import CONNECTOR_LABELS, get_network_access
 
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    storage_uri='memory://',
+    default_limits=['500 per day'],
+)
 
 DIRECTIONS_URL    = 'https://maps.googleapis.com/maps/api/directions/json'
 GEOCODE_URL       = 'https://maps.googleapis.com/maps/api/geocode/json'
@@ -348,6 +357,7 @@ def service_worker():
 
 
 @app.get('/api/geocode')
+@limiter.limit('60 per hour')
 def geocode():
     address = request.args.get('address', '').strip()
     if not address:
@@ -375,6 +385,7 @@ def geocode():
 
 
 @app.post('/api/route')
+@limiter.limit('30 per hour')
 def route():
     data = request.get_json(silent=True) or {}
     origin       = data.get('origin')
@@ -428,6 +439,7 @@ def route():
 
 
 @app.post('/api/poi')
+@limiter.limit('120 per hour')
 def poi():
     data = request.get_json(silent=True) or {}
     lat = data.get('lat')
